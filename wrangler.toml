@@ -10,6 +10,16 @@ directory = "./dist"
 binding = "ASSETS"
 
 
+# ===================== 运行位置（Placement）=====================
+# 默认行为：Worker 在「离访问者最近」的机房执行。访问者若经由海外出口（代理/VPN）
+# 访问，Worker 就会在海外机房执行，Worker → yun.139.com 的每次调用都变成跨洲往返，
+# 列目录随之明显变慢。
+# 这里显式把 Worker 钉在离香港最近的机房：既贴近中国移动云盘，也不受访客出口位置影响。
+# 备选写法：删掉 region，改用 hostname = "yun.139.com"（实验性，探测上游位置后自动就近）。
+[placement]
+region = "aws:ap-east-1"
+
+
 [vars]
 ENVIRONMENT = "production"
 
