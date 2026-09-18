@@ -40,27 +40,22 @@ export const sqlFormat: FormatAdapter = {
       throw new Error(`Driver ${driver.name} does not support SQL queries`)
     }
 
-    // 检查是否已初始化（schema_info 为 TS 内部标记表，不加前缀）
-    const marks = await driver.query(
-      "SELECT v FROM schema_info WHERE k = ?",
-      [INIT_MARK],
-      env,
-    )
+    // 初始化标记与各表数据一起并发读取。表由 driver.query 内部的 ensureSchema
+    // 预先建好，因此并发查询是安全的；串行 8 次往返由此压成 1 次。
+    const [marks, ...tables] = await Promise.all([
+      driver.query("SELECT v FROM schema_info WHERE k = ?", [INIT_MARK], env),
+      ...TABLE_NAMES.map((table) =>
+        driver.query(`SELECT * FROM ${qn(table, env)}`, [], env),
+      ),
+    ])
     if (!marks || marks.length === 0) return null
 
-    // 各表之间没有依赖，并发读取：把 7 次串行往返压成 1 次
-    const entries = await Promise.all(
-      TABLE_NAMES.map(async (table) => {
-        const rows = await driver.query(
-          `SELECT * FROM ${qn(table, env)}`,
-          [],
-          env,
-        )
-        return [table, rows.map((r: any) => rowToEntity(table, r))] as const
-      }),
-    )
+    const out: Record<string, any> = {}
+    TABLE_NAMES.forEach((table, index) => {
+      out[table] = (tables[index] || []).map((r: any) => rowToEntity(table, r))
+    })
 
-    return Object.fromEntries(entries) as Record<string, any>
+    return out
   },
 
   async save(data: any, driver: Driver, env?: any): Promise<boolean> {
