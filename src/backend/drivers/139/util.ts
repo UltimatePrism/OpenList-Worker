@@ -49,6 +49,18 @@ export function formatTime(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
+/**
+ * 路由策略缓存。
+ *
+ * 存储层几乎每个操作前都会调用 driver.init()，而 init() 会向上游请求一次
+ * qryRoutePolicy。该策略在会话内基本不变，缓存后每次列目录少一次上游往返。
+ */
+const ROUTE_POLICY_TTL_MS = 10 * 60 * 1000
+const routePolicyCache = new Map<
+  string,
+  { personal?: string; family?: string; group?: string; ts: number }
+>()
+
 export class Yun139ApiClient {
   private addition: Yun139Addition
   public personalHost = "https://yun.139.com"
@@ -169,9 +181,28 @@ export class Yun139ApiClient {
     return json as T
   }
 
+  private applyRouteHosts(hosts: {
+    personal?: string
+    family?: string
+    group?: string
+  }): void {
+    if (hosts.personal) this.personalHost = hosts.personal
+    if (hosts.family) this.familyHost = hosts.family
+    if (hosts.group) this.groupHost = hosts.group
+  }
+
   async init(): Promise<void> {
     if (!this.addition.authorization) {
       throw new Error("139 Cloud Authorization is required")
+    }
+
+    // 命中缓存时不再向上游查询路由策略
+    if (this.account) {
+      const cached = routePolicyCache.get(this.account)
+      if (cached && Date.now() - cached.ts < ROUTE_POLICY_TTL_MS) {
+        this.applyRouteHosts(cached)
+        return
+      }
     }
 
     try {
@@ -187,16 +218,23 @@ export class Yun139ApiClient {
         },
       )
 
+      const hosts: { personal?: string; family?: string; group?: string } = {}
       if (routeRes.data?.routePolicyList) {
         for (const policy of routeRes.data.routePolicyList) {
           if (policy.modName === "personal" && policy.httpsUrl) {
-            this.personalHost = policy.httpsUrl
+            hosts.personal = policy.httpsUrl
           } else if (policy.modName === "group" && policy.httpsUrl) {
-            this.groupHost = policy.httpsUrl
+            hosts.group = policy.httpsUrl
           } else if (policy.modName === "family" && policy.httpsUrl) {
-            this.familyHost = policy.httpsUrl
+            hosts.family = policy.httpsUrl
           }
         }
+      }
+
+      this.applyRouteHosts(hosts)
+      // 账号解析失败时不缓存，避免不同账号共用同一个 key
+      if (this.account) {
+        routePolicyCache.set(this.account, { ...hosts, ts: Date.now() })
       }
     } catch (e) {
       console.warn(
