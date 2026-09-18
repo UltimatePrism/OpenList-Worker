@@ -48,14 +48,19 @@ export const sqlFormat: FormatAdapter = {
     )
     if (!marks || marks.length === 0) return null
 
-    const out: Record<string, any> = {}
+    // 各表之间没有依赖，并发读取：把 7 次串行往返压成 1 次
+    const entries = await Promise.all(
+      TABLE_NAMES.map(async (table) => {
+        const rows = await driver.query(
+          `SELECT * FROM ${qn(table, env)}`,
+          [],
+          env,
+        )
+        return [table, rows.map((r: any) => rowToEntity(table, r))] as const
+      }),
+    )
 
-    for (const table of TABLE_NAMES) {
-      const rows = await driver.query(`SELECT * FROM ${qn(table, env)}`, [], env)
-      out[table] = rows.map((r: any) => rowToEntity(table, r))
-    }
-
-    return out
+    return Object.fromEntries(entries) as Record<string, any>
   },
 
   async save(data: any, driver: Driver, env?: any): Promise<boolean> {

@@ -18,9 +18,11 @@ const d1Inited = new WeakMap<object, boolean>()
 
 async function ensureSchema(db: any, env?: any): Promise<void> {
   if (d1Inited.get(db)) return
-  // KV 表（map/key 格式）+ 列式表（sql 格式）一并创建
-  for (const ddl of [...KV_SCHEMA_SQLITE, ...buildDdl("sqlite", env)]) {
-    await db.prepare(ddl).run()
+  // KV 表（map/key 格式）+ 列式表（sql 格式）一并创建。
+  // DDL 之间无依赖，用 batch 一次往返提交，避免冷启动时逐条串行往返。
+  const ddl = [...KV_SCHEMA_SQLITE, ...buildDdl("sqlite", env)]
+  if (ddl.length > 0) {
+    await db.batch(ddl.map((statement: string) => db.prepare(statement)))
   }
   d1Inited.set(db, true)
 }
